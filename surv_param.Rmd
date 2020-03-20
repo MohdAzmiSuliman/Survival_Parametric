@@ -1,0 +1,120 @@
+---
+title: "Survival Practical"
+author: "Mohd Azmi"
+date: "20/03/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r}
+library(pacman)
+p_load(haven, tidyverse, summarytools, broom, survival)
+```
+
+```{r}
+addicts <- read_dta("addicts.dta")
+addicts1 <- addicts %>% mutate_if(is.labelled, funs(as_factor(.)))
+```
+
+```{r}
+addicts1
+descr(addicts1)
+freq(addicts1)
+```
+
+## estimation of AFT models
+
+### Exponential model
+
+```{r}
+p_load(survival)
+exp_mod <- survreg(Surv(survt, status == 1) ~ prison + dose + clinic, data = addicts1, dist = "exponential")
+summary(exp_mod)
+```
+
+```{r}
+coef(exp_mod)[2]
+exp(coef(exp_mod))[2]
+```
+
+estimated log time to drop out of the clinic in subject with past prison history (as compared to those without prison history) = `r round(coef(exp_mod)[2],3)`
+
+AF or TR = `r round(exp(coef(exp_mod))[2],3)`
+
+HR = `r round(exp(-coef(exp_mod))[2],3)`
+
+### Weibull model
+
+```{r}
+wei_mod <- survreg(Surv(survt, status == 1) ~ prison + dose + clinic, data = addicts1, dist = "weibull")
+summary(wei_mod)
+```
+
+```{r}
+p_load(SurvRegCensCov)
+ConvertWeibull(wei_mod, conf.level = 0.95)
+```
+
+```{r}
+WeibullDiag(Surv(survt, status == 1) ~ prison, data = addicts1)
+```
+
+## Prediction
+
+```{r}
+new_data <- data.frame(prison = 1, dose = 50, clinic = 1)
+quant_p <- c(0.25, 0.5, 0.75)
+pred_weimod <- predict(wei_mod, newdata = new_data, type = "quantile", p = quant_p)
+pred_weimod
+```
+
+### plot
+
+```{r}
+plot(x = predict (wei_mod, newdata = new_data, type = "quantile", p = (1 : 98) / 100), y = (1 : 98) / 100 , type = "l")
+```
+
+## Log-logistic model
+
+```{r}
+logl_mod <- survreg(Surv(survt, status == 1) ~ prison + dose + clinic, data = addicts1, dist = "loglogistic")
+summary(logl_mod)
+```
+
+## PH assumption
+
+```{r}
+kmfit <- survfit(Surv(survt, status == 1) ~ clinic, data = addicts1)
+plot(kmfit)
+plot(log(kmfit$time), log(kmfit$surv/(1-kmfit$surv)))
+```
+
+## Survival Probability Plot
+
+```{r}
+lung <- lung #lung dataset from survival package
+lung
+```
+
+```{r}
+weimod_lung <- survreg(Surv(time, status == 2) ~ ph.ecog, data = lung, dist = "weibull")
+summary(weimod_lung)
+```
+
+
+```{r}
+pct <- 1:98/100
+newdata_lung <- data.frame(ph.ecog = 2)
+ptime <- predict(weimod_lung, newdata = newdata_lung, type = "quantile", p = pct, se = T)
+ptime
+
+matplot(cbind(ptime$fit, ptime$fit + 1.96*ptime$se.fit,
+              ptime$fit - 1.96*ptime$se.fit)/30.5, 1-pct,
+        xlab = "Months", ylab = "Survival", type = "l", lty = c(1,2,2), col = 1)
+```
+
+
