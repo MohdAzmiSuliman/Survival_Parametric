@@ -9,36 +9,67 @@ output: html_document
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
+# Environment
+
+## Packages
 
 ```{r}
 library(pacman)
-p_load(haven, tidyverse, summarytools, broom, survival)
+p_load(haven, tidyverse, summarytools, broom, survival, SurvRegCensCov, flexsurv)
 ```
 
+## Dataset
 ```{r}
 addicts <- read_dta("addicts.dta")
-addicts1 <- addicts %>% mutate_if(is.labelled, funs(as_factor(.)))
+addicts1 <- addicts %>% mutate_if(is.labelled, list(~ as_factor(.)))
 ```
 
+# Analysis
+
+## Exploration
 ```{r}
 addicts1
 descr(addicts1)
 freq(addicts1)
 ```
 
+ID - patient ID
+survt - time in day until patient was drop out of clinic or censored
+status - 0 censored, 1 drop out
+clinic - clinic 1 or clinic 2
+prison - 0 no record, 1 hx of prison
+dose - methadone dose (continous variable)
+
+```{r}
+ggplot(addicts1) + geom_histogram(aes(survt))
+ggplot(addicts1, aes(survt)) +
+  geom_histogram(aes(y = ..density..)) +
+  stat_function(fun = dnorm, args = list(mean = mean(addicts1$survt),
+                                         sd = sd(addicts1$survt)))
+ggplot(addicts1, aes(sample = survt)) +
+  geom_qq() + geom_qq_line()
+```
+
+
 ## estimation of AFT models
 
 ### Exponential model
 
 ```{r}
-p_load(survival)
+surv_mode <- Surv(time = addicts1$survt, event = addicts1$status == 1)
 exp_mod <- survreg(Surv(survt, status == 1) ~ prison + dose + clinic, data = addicts1, dist = "exponential")
+cox_mod <- coxph(Surv(survt, status == 1) ~ prison + dose + clinic, data = addicts1)
 summary(exp_mod)
+summary(cox_mod)
 ```
 
 ```{r}
-coef(exp_mod)[2]
-exp(coef(exp_mod))[2]
+tidy(exp_mod) %>% 
+  mutate(TR = exp(estimate),
+         llci = exp(conf.low),
+         ulci = exp(conf.high),
+         HR = exp(-estimate)) %>% 
+  select(term, estimate, TR, llci, ulci, p.value, HR)
 ```
 
 estimated log time to drop out of the clinic in subject with past prison history (as compared to those without prison history) = `r round(coef(exp_mod)[2],3)`
@@ -49,18 +80,55 @@ HR = `r round(exp(-coef(exp_mod))[2],3)`
 
 ### Weibull model
 
+#### Weibull Model Option 1
+
 ```{r}
 wei_mod <- survreg(Surv(survt, status == 1) ~ prison + dose + clinic, data = addicts1, dist = "weibull")
 summary(wei_mod)
 ```
 
 ```{r}
-p_load(SurvRegCensCov)
-ConvertWeibull(wei_mod, conf.level = 0.95)
+tidy(wei_mod) %>% 
+  mutate(TR = exp(estimate),
+         llci = exp(conf.low),
+         ulci = exp(conf.high),
+         HR = exp(-estimate)) %>% 
+  select(term, estimate, TR, llci, ulci, p.value, HR) #can't use this one because scale is 0.73, need to consider the scale
+
 ```
+
+can't use this one because scale is 0.73, need to consider the scale
+
+
+```{r}
+ConvertWeibull(wei_mod, conf.level = 0.95) # to convert to weibull ph model
+```
+
+
+
+#### Weibull model - option 2
+
+aft model
+
+```{r}
+wei_mod_o2_aft <- flexsurvreg(Surv(survt, status == 1) ~ prison + dose + clinic, data = addicts1, dist = "weibull")
+wei_mod_o2_aft #same with survreg(Surv(survt, status == 1) ~ prison + dose + clinic, data = addicts1, dist = "weibull")
+```
+
+ph model
+
+```{r}
+wei_mod_o2_ph <- flexsurvreg(Surv(survt, status == 1) ~ prison + dose + clinic, data = addicts1, dist = "weibullPH")
+wei_mod_o2_ph  #same with ConvertWeibull()
+```
+
+
+### Model Adequacy
 
 ```{r}
 WeibullDiag(Surv(survt, status == 1) ~ prison, data = addicts1)
+WeibullDiag(Surv(survt, status == 1) ~ clinic, data = addicts1)
+
 ```
 
 ## Prediction
@@ -70,12 +138,13 @@ new_data <- data.frame(prison = 1, dose = 50, clinic = 1)
 quant_p <- c(0.25, 0.5, 0.75)
 pred_weimod <- predict(wei_mod, newdata = new_data, type = "quantile", p = quant_p)
 pred_weimod
+cbind(quant_p, pred_weimod)
 ```
 
 ### plot
 
 ```{r}
-plot(x = predict (wei_mod, newdata = new_data, type = "quantile", p = (1 : 98) / 100), y = (1 : 98) / 100 , type = "l")
+plot(x = predict(wei_mod, newdata = new_data, type = "quantile", p = (1 : 98) / 100), y = (1 : 98) / 100 , type = "b")
 ```
 
 ## Log-logistic model
@@ -110,7 +179,6 @@ summary(weimod_lung)
 pct <- 1:98/100
 newdata_lung <- data.frame(ph.ecog = 2)
 ptime <- predict(weimod_lung, newdata = newdata_lung, type = "quantile", p = pct, se = T)
-ptime
 
 matplot(cbind(ptime$fit, ptime$fit + 1.96*ptime$se.fit,
               ptime$fit - 1.96*ptime$se.fit)/30.5, 1-pct,
