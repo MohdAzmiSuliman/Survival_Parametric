@@ -64,7 +64,7 @@ summary(cox_mod)
 ```
 
 ```{r}
-tidy(exp_mod) %>% 
+tidy(exp_mod, conf.int = T) %>% 
   mutate(TR = exp(estimate),
          llci = exp(conf.low),
          ulci = exp(conf.high),
